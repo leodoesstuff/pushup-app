@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pushup AI</title>
+
+<style>
+body {
+  margin: 0;
+  font-family: -apple-system;
+  background: #0b0b0b;
+  color: white;
+  display: flex;
+  justify-content: center;
+}
+
+.app {
+  max-width: 420px;
+  width: 100%;
+  padding: 20px;
+}
+
+.card {
+  background: #171717;
+  border-radius: 16px;
+  padding: 15px;
+  margin-bottom: 12px;
+}
+
+#count { font-size: 60px; text-align: center; }
+#status { text-align: center; opacity: 0.7; }
+
+video, canvas {
+  width: 100%;
+  border-radius: 12px;
+}
+
+.wrap { position: relative; }
+canvas { position: absolute; top: 0; left: 0; }
+
+button {
+  width: 100%;
+  padding: 14px;
+  border-radius: 12px;
+  border: none;
+  background: #00c853;
+  color: white;
+  font-size: 18px;
+  margin-top: 10px;
+}
+
+input {
+  width: 100%;
+  padding: 12px;
+  border-radius: 10px;
+  border: none;
+  margin-bottom: 10px;
+}
+
+.leaderboard div {
+  display: flex;
+  justify-content: space-between;
+}
+</style>
+</head>
+
+<body>
+
+<div class="app">
+
+<h2>Pushup AI 💪</h2>
+
+<div class="card">
+  <input id="name" placeholder="Enter your name">
+  <button onclick="login()">Login</button>
+</div>
+
+<div class="card">
+  <div id="count">0</div>
+  <div id="status">Press Start</div>
+</div>
+
+<div class="card wrap">
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+</div>
+
+<button onclick="start()">Start</button>
+<button onclick="finish()">Finish</button>
+
+<div class="card">
+  <h3>🏆 Leaderboard</h3>
+  <div id="board"></div>
+</div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+
+<script>
+const API = ""; // same domain
+
+let username = "";
+let count = 0;
+let state = "up";
+let downTime = 0;
+let running = false;
+
+function login(){
+  username = document.getElementById("name").value;
+  alert("Logged in as " + username);
+}
+
+async function loadBoard(){
+  const res = await fetch("/scores");
+  const data = await res.json();
+
+  const board = document.getElementById("board");
+  board.innerHTML = "";
+
+  data.forEach(p=>{
+    const div = document.createElement("div");
+    div.innerHTML = `<span>${p.name}</span><span>${p.score}</span>`;
+    board.appendChild(div);
+  });
+}
+
+async function saveScore(score){
+  await fetch("/scores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: username, score })
+  });
+
+  loadBoard();
+}
+
+function angle(a,b,c){
+  const ab={x:a.x-b.x,y:a.y-b.y};
+  const cb={x:c.x-b.x,y:c.y-b.y};
+  const dot=ab.x*cb.x+ab.y*cb.y;
+  return Math.acos(dot/(Math.hypot(ab.x,ab.y)*Math.hypot(cb.x,cb.y)))*180/Math.PI;
+}
+
+async function start(){
+  if(running) return;
+  running = true;
+
+  const video = document.getElementById("video");
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+
+  video.srcObject = await navigator.mediaDevices.getUserMedia({video:true});
+
+  const pose = new Pose({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+  });
+
+  pose.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true
+  });
+
+  pose.onResults(r=>{
+    if(!r.poseLandmarks) return;
+
+    const lm = r.poseLandmarks;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    drawConnectors(ctx, lm, POSE_CONNECTIONS, {color:"#00e676"});
+    drawLandmarks(ctx, lm, {color:"#00c853"});
+
+    const s = lm[11];
+    const e = lm[13];
+    const w = lm[15];
+
+    if(!s || !e || !w) return;
+
+    const elbow = angle(s,e,w);
+
+    const isDown = elbow < 95;
+    const isUp = elbow > 155;
+
+    const now = Date.now();
+
+    if(isDown && state==="up"){
+      state="down";
+      downTime = now;
+      document.getElementById("status").innerText="DOWN";
+    }
+
+    if(isUp && state==="down"){
+      state="up";
+
+      const duration = now - downTime;
+
+      if(duration > 700){
+        count++;
+        document.getElementById("count").innerText=count;
+        document.getElementById("status").innerText="GOOD REP ✅";
+      } else {
+        document.getElementById("status").innerText="TOO FAST ❌";
+      }
+    }
+  });
+
+  async function loop(){
+    await pose.send({image: video});
+    requestAnimationFrame(loop);
+  }
+
+  loop();
+}
+
+function finish(){
+  if(!username) return alert("Login first");
+  saveScore(count);
+}
+
+loadBoard();
+</script>
+
+</body>
+</html>
